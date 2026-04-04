@@ -1,0 +1,339 @@
+/* ChatGPT Conversation Navigator — sidebar.css v1.0
+   
+   Matches ChatGPT's design language:
+   ─────────────────────────────────────────────────
+   Font:        ui-sans-serif / Söhne / -apple-system  
+   Dark bg:     #212121 (main), #2f2f2f (surfaces), #3d3d3d (hover)
+   Light bg:    #ffffff (main), #f9f9f9 (surfaces), #efefef (hover)
+   Text dark:   #ececec (primary), #8e8ea0 (secondary)
+   Text light:  #0d0d0d (primary), #6e6e80 (secondary)
+   Accent:      #10a37f (OpenAI green)
+   Radius:      12px cards, 8px items, 6px inputs
+   Border:      rgba(255,255,255,0.1) dark / rgba(0,0,0,0.08) light
+   
+   Panel starts at top: 64px (below ChatGPT's navbar)
+   Toggle tab centered in content zone
+*/
+
+/* ── CSS variable bridge ─────────────────────────────────────
+   ChatGPT doesn't expose clean --var tokens in the DOM the
+   way Claude does, so we define our own that work in both
+   light and dark mode via @media prefers-color-scheme
+──────────────────────────────────────────────────────────── */
+:root {
+  --gptn-bg-main:    #ffffff;
+  --gptn-bg-surface: #f9f9f9;
+  --gptn-bg-hover:   #efefef;
+  --gptn-bg-active:  #e8e8e8;
+  --gptn-text-1:     #0d0d0d;
+  --gptn-text-2:     #4a4a4a;
+  --gptn-text-3:     #6e6e80;
+  --gptn-text-4:     #9a9a9a;
+  --gptn-border:     rgba(0,0,0,0.09);
+  --gptn-border-med: rgba(0,0,0,0.14);
+  --gptn-accent:     #10a37f;
+  --gptn-accent-dim: rgba(16,163,127,0.12);
+  --gptn-user-bg:    #e8f5f2;
+  --gptn-user-fg:    #0a6555;
+  --gptn-gpt-bg:     #f0f0f0;
+  --gptn-gpt-fg:     #444;
+  --gptn-shadow:     rgba(0,0,0,0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --gptn-bg-main:    #212121;
+    --gptn-bg-surface: #2f2f2f;
+    --gptn-bg-hover:   #3d3d3d;
+    --gptn-bg-active:  #424242;
+    --gptn-text-1:     #ececec;
+    --gptn-text-2:     #c4c4c4;
+    --gptn-text-3:     #8e8ea0;
+    --gptn-text-4:     #6e6e80;
+    --gptn-border:     rgba(255,255,255,0.08);
+    --gptn-border-med: rgba(255,255,255,0.14);
+    --gptn-user-bg:    rgba(16,163,127,0.18);
+    --gptn-user-fg:    #4fd1b3;
+    --gptn-gpt-bg:     rgba(255,255,255,0.08);
+    --gptn-gpt-fg:     #c4c4c4;
+    --gptn-shadow:     rgba(0,0,0,0.3);
+  }
+}
+
+/* ── Toggle button ───────────────────────────────────────────
+   ChatGPT has a right sidebar panel of its own (canvas/memory)
+   so we keep the toggle at vertical center, well-inset from
+   the very edge to avoid clashing with any native controls.
+──────────────────────────────────────────────────────────── */
+#gptn-btn {
+  position: fixed;
+  right: 0;
+  top: calc(64px + (100dvh - 64px - 80px) / 2);
+  transform: translateY(-50%);
+  z-index: 2147483640;
+  width: 22px;
+  height: 52px;
+  padding: 0;
+  margin: 0;
+  background: var(--gptn-bg-surface);
+  border: 1px solid var(--gptn-border);
+  border-right: none;
+  border-radius: 8px 0 0 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: width 0.15s ease, background 0.12s ease;
+  box-shadow: -2px 0 10px var(--gptn-shadow);
+  isolation: isolate;
+}
+#gptn-btn:hover         { width: 26px; background: var(--gptn-bg-hover); }
+#gptn-btn:focus-visible { outline: 2px solid var(--gptn-accent); outline-offset: -2px; }
+#gptn-btn svg {
+  width: 12px; height: 12px;
+  color: var(--gptn-text-3);
+  display: block; flex-shrink: 0;
+  transition: transform 0.22s ease, color 0.12s;
+  pointer-events: none;
+}
+#gptn-btn:hover svg    { color: var(--gptn-text-1); }
+#gptn-btn.gptn-open svg { transform: rotate(180deg); }
+
+/* ── Panel ───────────────────────────────────────────────────
+   Starts at top: 64px — below ChatGPT's sticky navbar
+   which contains the model picker, share, and memory buttons
+──────────────────────────────────────────────────────────── */
+#gptn-panel {
+  position: fixed;
+  top: 64px;
+  right: 0;
+  width: 272px;
+  height: calc(100dvh - 64px);
+  z-index: 2147483639;
+  background: var(--gptn-bg-surface);
+  border-left: 1px solid var(--gptn-border);
+  border-top: 1px solid var(--gptn-border);
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.26s cubic-bezier(0.4, 0, 0.2, 1);
+  overflow: hidden;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Söhne", "Segoe UI", sans-serif;
+  font-size: 13px;
+  isolation: isolate;
+  border-radius: 0 0 0 12px;
+}
+#gptn-panel.gptn-open { transform: translateX(0); }
+
+/* ── Header ── */
+#gptn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 13px 13px 10px;
+  border-bottom: 1px solid var(--gptn-border);
+  flex-shrink: 0;
+}
+#gptn-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--gptn-text-1);
+  letter-spacing: -0.01em;
+}
+#gptn-title svg { width: 15px; height: 15px; color: var(--gptn-accent); flex-shrink: 0; }
+#gptn-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--gptn-text-3);
+  background: var(--gptn-bg-hover);
+  border-radius: 100px;
+  padding: 1px 7px;
+}
+#gptn-x {
+  width: 26px; height: 26px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gptn-text-3);
+  transition: background 0.1s, color 0.1s;
+  flex-shrink: 0;
+}
+#gptn-x:hover { background: var(--gptn-bg-hover); color: var(--gptn-text-1); }
+#gptn-x svg   { width: 13px; height: 13px; }
+
+/* ── Progress bar ── */
+#gptn-bar  { height: 2px; background: var(--gptn-border); flex-shrink: 0; }
+#gptn-fill {
+  height: 100%; width: 0%;
+  background: var(--gptn-accent);
+  border-radius: 0 2px 2px 0;
+  transition: width 0.18s ease;
+}
+
+/* ── Search ── */
+#gptn-searchbox {
+  position: relative;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--gptn-border);
+  flex-shrink: 0;
+}
+#gptn-searchico {
+  position: absolute;
+  left: 20px; top: 50%;
+  transform: translateY(-50%);
+  color: var(--gptn-text-3);
+  pointer-events: none;
+  display: flex; align-items: center;
+}
+#gptn-searchico svg { width: 13px; height: 13px; }
+#gptn-q {
+  width: 100%; height: 30px;
+  box-sizing: border-box;
+  background: var(--gptn-bg-main);
+  border: 1px solid var(--gptn-border-med);
+  border-radius: 8px;
+  padding: 0 9px 0 28px;
+  font-size: 12.5px;
+  font-family: inherit;
+  color: var(--gptn-text-1);
+  outline: none;
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+#gptn-q::placeholder { color: var(--gptn-text-4); }
+#gptn-q:focus {
+  border-color: var(--gptn-accent);
+  box-shadow: 0 0 0 2px var(--gptn-accent-dim);
+}
+
+/* ── List ── */
+#gptn-list {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 5px 0;
+}
+#gptn-list::-webkit-scrollbar       { width: 4px; }
+#gptn-list::-webkit-scrollbar-track { background: transparent; }
+#gptn-list::-webkit-scrollbar-thumb { background: var(--gptn-border-med); border-radius: 4px; }
+
+/* ── Item ── */
+.gptn-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 8px 12px;
+  margin: 1px 5px;
+  border-radius: 8px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background 0.10s ease;
+  animation: gptn-in 0.16s ease both;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.gptn-item:hover      { background: var(--gptn-bg-hover); }
+.gptn-item.gptn-active {
+  background: var(--gptn-bg-active);
+  border-color: var(--gptn-border-med);
+}
+
+/* ── Avatar ── */
+.gptn-av {
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 1px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.gptn-av svg          { width: 12px; height: 12px; }
+.gptn-av.user         { background: var(--gptn-user-bg); color: var(--gptn-user-fg); }
+.gptn-av.assistant    { background: var(--gptn-gpt-bg);  color: var(--gptn-gpt-fg); }
+
+/* ── Text ── */
+.gptn-body   { flex: 1; min-width: 0; }
+.gptn-role   {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--gptn-text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 2px;
+}
+.gptn-preview {
+  font-size: 12px;
+  color: var(--gptn-text-2);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gptn-item.gptn-active .gptn-preview { color: var(--gptn-text-1); }
+.gptn-num {
+  font-size: 10px;
+  color: var(--gptn-text-4);
+  flex-shrink: 0;
+  margin-top: 2px;
+  font-weight: 500;
+}
+.gptn-hl { background: rgba(16,163,127,0.20); border-radius: 2px; color: inherit; }
+
+/* ── Empty ── */
+#gptn-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--gptn-text-4);
+  gap: 10px;
+}
+#gptn-empty svg { width: 28px; height: 28px; opacity: 0.4; }
+#gptn-empty p   { font-size: 12px; line-height: 1.55; margin: 0; }
+
+/* ── Footer ── */
+#gptn-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 12px;
+  border-top: 1px solid var(--gptn-border);
+  flex-shrink: 0;
+}
+#gptn-info { font-size: 11px; color: var(--gptn-text-4); font-weight: 500; }
+#gptn-foot > div { display: flex; gap: 4px; }
+
+#gptn-top, #gptn-btm {
+  width: 24px; height: 24px;
+  padding: 0;
+  border: 1px solid var(--gptn-border-med);
+  background: transparent;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gptn-text-3);
+  transition: background 0.10s, color 0.10s;
+}
+#gptn-top:hover, #gptn-btm:hover {
+  background: var(--gptn-bg-hover);
+  color: var(--gptn-text-1);
+}
+#gptn-top svg, #gptn-btm svg { width: 12px; height: 12px; }
+
+/* ── Animations ── */
+@keyframes gptn-in {
+  from { opacity: 0; transform: translateX(6px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
