@@ -35,6 +35,10 @@ Works in Chrome, Edge, Brave, Arc, Vivaldi.
 | Go to oldest | Click `↑` in footer |
 | Go to newest | Click `↓` in footer |
 
+## Why no token tracker?
+
+ChatGPT's free tier doesn't operate on a caching/token-window model the way Claude's does — a token estimate wouldn't map to anything actionable for most users, so this extension stays focused purely on navigation.
+
 ## Privacy
 
 All processing is local. No data leaves your browser. Ever.
