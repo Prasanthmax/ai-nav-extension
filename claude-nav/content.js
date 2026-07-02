@@ -27,6 +27,7 @@
     up       : svg('<line x1="8" y1="13" x2="8" y2="3"/><polyline points="4 7 8 3 12 7"/>'),
     down     : svg('<line x1="8" y1="3" x2="8" y2="13"/><polyline points="4 9 8 13 12 9"/>'),
     empty    : svg('<rect x="2" y="4" width="12" height="8" rx="1" stroke-dasharray="2 1.5"/><line x1="5" y1="8" x2="11" y2="8"/>'),
+    clock    : svg('<circle cx="8" cy="8" r="6"/><path d="M8 5v3l2 2"/>'),
   };
 
   /* ── State ── */
@@ -56,6 +57,21 @@
         <button id="ccn-x" aria-label="Close">${I.close}</button>
       </div>
       <div id="ccn-bar"><div id="ccn-fill"></div></div>
+      <div id="ccn-usage">
+        <div class="ccn-usage-row">
+          <span class="ccn-usage-label">Session</span>
+          <span class="ccn-usage-val" id="ccn-tok-session">~0</span>
+        </div>
+        <div class="ccn-usage-row">
+          <span class="ccn-usage-label">Today</span>
+          <span class="ccn-usage-val" id="ccn-tok-day">~0</span>
+        </div>
+        <div class="ccn-usage-row">
+          <span class="ccn-usage-label">This week</span>
+          <span class="ccn-usage-val" id="ccn-tok-week">~0</span>
+        </div>
+        <div id="ccn-usage-note">Estimated · ~4 chars/token</div>
+      </div>
       <div id="ccn-searchbox">
         <span id="ccn-searchico">${I.search}</span>
         <input id="ccn-q" type="text" placeholder="Search messages…" autocomplete="off" spellcheck="false"/>
@@ -71,6 +87,13 @@
 
     document.body.appendChild(btn);
     document.body.appendChild(panel);
+
+    /* Cache-window countdown pill — floats at top-center of the page */
+    const cachePill = document.createElement("div");
+    cachePill.id = "ccn-cache-pill";
+    cachePill.innerHTML = `${I.clock}<span id="ccn-cache-text">5:00</span>`;
+    cachePill.title = "Approx. prompt-cache window — resets each message you send. Reply before this hits 0 to likely keep the cache warm.";
+    document.body.appendChild(cachePill);
 
     btn.addEventListener("click", toggle);
     panel.querySelector("#ccn-x").addEventListener("click", close);
@@ -119,22 +142,227 @@
   function getNodes() {
     /* Try specific test-ids first (most reliable) */
     let nodes = document.querySelectorAll('[data-testid="user-message"], [data-testid="assistant-message"]');
-    if (nodes.length > 0) return Array.from(nodes).slice(0, 600);
+    if (nodes.length > 0) return dedupeNodes(Array.from(nodes)).slice(0, 600);
 
     /* Fallback: data-message-author-role */
     nodes = document.querySelectorAll('[data-message-author-role]');
-    if (nodes.length > 0) return Array.from(nodes).slice(0, 600);
+    if (nodes.length > 0) return dedupeNodes(Array.from(nodes)).slice(0, 600);
 
     return [];
   }
 
+  /* Remove nodes that are DOM-nested inside another matched node
+     (prevents a wrapper + its inner element both counting as
+     separate "messages", which is what desyncs role parity) */
+  function dedupeNodes(nodes) {
+    return nodes.filter((n, i) => !nodes.some((other, j) => i !== j && other.contains(n) && other !== n));
+  }
+
+  /* Role detection — v1.1 fix
+     BUG (v1.0): fell back to raw sibling-index parity, which
+     permanently mislabels every subsequent message once one
+     node is misjudged (e.g. edited/regenerated turns that lack
+     data-testid). 
+     FIX: search own attributes → ancestors → descendants first.
+     Only if truly no signal exists anywhere, alternate from the
+     LAST CONFIRMED role rather than sibling position — this
+     self-heals on the very next correctly-tagged message instead
+     of staying wrong for the rest of the conversation. */
+  let lastConfirmedRole = null;
+
+  /* ── Token estimation & cache timer state ──────────────────
+     IMPORTANT: These are ESTIMATES only. Claude.ai's page does
+     not expose real token counts or real cache state to a
+     content script — there is no such data in the DOM. We
+     approximate using the standard ~4 chars/token heuristic,
+     and approximate the cache window using Anthropic's publicly
+     documented 5-minute prompt-cache TTL, reset on each message.
+     Both are labeled "~estimated" in the UI — never presented
+     as exact figures.
+  ──────────────────────────────────────────────────────────── */
+  let sessionTokens   = 0;                 // resets when tab/page reloads
+  let lightScanTimer  = null;
+  let lightObserver   = null;
+  let lastLightLen    = 0;
+  let cacheInterval   = null;
+  let cacheDeadline   = 0;                 // epoch ms when the 5-min window ends
+  const CACHE_WINDOW_MS = 5 * 60 * 1000;   // Anthropic's documented cache TTL
+  const TOK_LOG_KEY = "ccn_tok_log_v1";
+
+  function todayKey() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+  }
+
+  function loadTokLog() {
+    try {
+      const raw = localStorage.getItem(TOK_LOG_KEY);
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  }
+
+  function saveTokLog(log) {
+    try {
+      /* Trim entries older than 8 days to keep storage small */
+      const cutoff = Date.now() - 8 * 24 * 60 * 60 * 1000;
+      Object.keys(log).forEach(k => {
+        const t = new Date(k).getTime();
+        if (isNaN(t) || t < cutoff) delete log[k];
+      });
+      localStorage.setItem(TOK_LOG_KEY, JSON.stringify(log));
+    } catch { /* localStorage unavailable — silently skip persistence */ }
+  }
+
+  function addTokenEstimate(charCount) {
+    const tokens = Math.ceil(charCount / 4);
+    sessionTokens += tokens;
+
+    const log = loadTokLog();
+    const key = todayKey();
+    log[key] = (log[key] || 0) + tokens;
+    saveTokLog(log);
+
+    updateUsagePanel(log);
+  }
+
+  function updateUsagePanel(log) {
+    log = log || loadTokLog();
+    const dayEl  = document.getElementById("ccn-tok-day");
+    const weekEl = document.getElementById("ccn-tok-week");
+    const sessEl = document.getElementById("ccn-tok-session");
+    if (!dayEl) return;
+
+    const today = log[todayKey()] || 0;
+    let week = 0;
+    const now = Date.now();
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(now - i * 24 * 60 * 60 * 1000);
+      const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;
+      week += log[key] || 0;
+    }
+
+    sessEl.textContent = "~" + formatTok(sessionTokens);
+    dayEl.textContent  = "~" + formatTok(today);
+    weekEl.textContent = "~" + formatTok(week);
+  }
+
+  function formatTok(n) {
+    if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+    if (n >= 1000)    return (n / 1000).toFixed(1) + "K";
+    return String(n);
+  }
+
+  /* ── Cache window countdown pill ── */
+  function resetCacheWindow() {
+    cacheDeadline = Date.now() + CACHE_WINDOW_MS;
+    const pill = document.getElementById("ccn-cache-pill");
+    if (pill) pill.classList.remove("ccn-cache-expired");
+    tickCache();
+  }
+
+  function tickCache() {
+    const textEl = document.getElementById("ccn-cache-text");
+    const pill   = document.getElementById("ccn-cache-pill");
+    if (!textEl || !pill) return;
+
+    const remaining = cacheDeadline - Date.now();
+    if (remaining <= 0) {
+      textEl.textContent = "expired";
+      pill.classList.add("ccn-cache-expired");
+      pill.classList.remove("ccn-cache-warn");
+      return;
+    }
+    const mins = Math.floor(remaining / 60000);
+    const secs = Math.floor((remaining % 60000) / 1000);
+    textEl.textContent = `${mins}:${String(secs).padStart(2, "0")}`;
+    pill.classList.toggle("ccn-cache-warn", remaining < 60000);
+    pill.classList.remove("ccn-cache-expired");
+  }
+
+  /* ── Lightweight always-on watcher for tokens + cache timer
+     Runs independent of sidebar open/close so the cache pill
+     stays useful even when the navigator panel is closed.
+     Debounced and cheap — only reads node count + last node
+     text length, not a full sidebar re-render. ── */
+  function startLightWatcher() {
+    const target = document.querySelector('[data-testid="conversation-turn-list"]') || document.querySelector("main") || document.body;
+    lightObserver = new MutationObserver(() => {
+      clearTimeout(lightScanTimer);
+      lightScanTimer = setTimeout(lightScan, 700);
+    });
+    lightObserver.observe(target, { childList: true, subtree: true });
+
+    cacheInterval = setInterval(tickCache, 1000);
+  }
+
+  function lightScan() {
+    const nodes = getNodes();
+    if (nodes.length === 0) return;
+    if (nodes.length > lastLightLen) {
+      /* One or more new messages appeared — estimate tokens for each new one */
+      for (let i = lastLightLen; i < nodes.length; i++) {
+        const charCount = getFullTextLength(nodes[i]);
+        addTokenEstimate(charCount);
+      }
+      resetCacheWindow();
+    }
+    lastLightLen = nodes.length;
+  }
+
+  /* Full-length text walk for token estimation — no 250-char cap
+     (unlike getText, which is preview-only), but still skips
+     code blocks/UI chrome and never stores the string, just counts. */
+  function getFullTextLength(node) {
+    let count = 0;
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, {
+      acceptNode(n) {
+        const p = n.parentElement;
+        if (!p) return NodeFilter.FILTER_REJECT;
+        if (p.id && p.id.startsWith("ccn")) return NodeFilter.FILTER_REJECT;
+        if (p.closest && p.closest("#ccn-panel,#ccn-btn,#ccn-cache-pill")) return NodeFilter.FILTER_REJECT;
+        if (p.closest && p.closest("button,[aria-hidden='true'],svg")) return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      }
+    });
+    let n;
+    while ((n = walker.nextNode())) count += n.textContent.length;
+    return count;
+  }
+
   function role(node) {
-    const t = node.getAttribute("data-testid") || "";
-    const r = node.getAttribute("data-message-author-role") || "";
+    /* 1. Check the node itself */
+    let found = roleFromAttrs(node);
+    if (found) { lastConfirmedRole = found; return found; }
+
+    /* 2. Check up to 3 ancestor levels */
+    let anc = node.parentElement;
+    for (let depth = 0; anc && depth < 3; depth++, anc = anc.parentElement) {
+      found = roleFromAttrs(anc);
+      if (found) { lastConfirmedRole = found; return found; }
+    }
+
+    /* 3. Check descendants */
+    const roleEl = node.querySelector('[data-message-author-role],[data-testid*="user"],[data-testid*="assistant"]');
+    if (roleEl) {
+      found = roleFromAttrs(roleEl);
+      if (found) { lastConfirmedRole = found; return found; }
+    }
+
+    /* 4. Self-healing fallback: alternate from last CONFIRMED role,
+       not from sibling position. If we've never confirmed a role yet,
+       default to "user" (first message is always the user's). */
+    const guessed = lastConfirmedRole === "user" ? "assistant" : "user";
+    lastConfirmedRole = guessed;
+    return guessed;
+  }
+
+  function roleFromAttrs(el) {
+    if (!el || !el.getAttribute) return null;
+    const t = el.getAttribute("data-testid") || "";
+    const r = el.getAttribute("data-message-author-role") || "";
     if (t.includes("user")      || r === "user")      return "user";
     if (t.includes("assistant") || r === "assistant") return "assistant";
-    const siblings = Array.from(node.parentElement?.children || []);
-    return siblings.indexOf(node) % 2 === 0 ? "user" : "assistant";
+    return null;
   }
 
   /* TreeWalker — reads text cheaply without DOM cloning */
@@ -303,6 +531,7 @@
     messages  = [];
     activeIdx = -1;
     query     = "";
+    lastConfirmedRole = null;  /* reset role-healing state for the new conversation */
     const qEl = document.getElementById("ccn-q");
     if (qEl) qEl.value = "";
     if (open) {
@@ -318,9 +547,16 @@
   });
 
   /* ── Init ── */
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", buildUI);
-  } else {
+  function init() {
     buildUI();
+    updateUsagePanel();     // show today/week totals immediately from storage
+    resetCacheWindow();     // start the cache pill on page load
+    setTimeout(startLightWatcher, 1500);  // let Claude's page settle first
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
   }
 })();
